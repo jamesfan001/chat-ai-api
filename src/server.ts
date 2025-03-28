@@ -3,6 +3,10 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { StreamChat } from 'stream-chat';
 import OpenAI from 'openai';
+import { db } from './config/database.js';
+import { chats, users } from './db/schema.js';
+import { eq } from 'drizzle-orm';
+import { ChatCompletionMessageParam } from 'openai/resources';
 
 dotenv.config();
 
@@ -49,6 +53,19 @@ app.post(
         });
       }
 
+      // Check for existing user in database
+      const existingUser = await db
+        .select()
+        .from(users)
+        .where(eq(users.userId, userId));
+
+      if (!existingUser.length) {
+        console.log(
+          `User ${userId} does not exist in the database. Adding them...`
+        );
+        await db.insert(users).values({ userId, name, email });
+      }
+
       res.status(200).json({ userId, name, email });
     } catch (error) {
       res.status(500).json({ error: 'Internal Server Error' });
@@ -74,14 +91,48 @@ app.post('/chat', async (req: Request, res: Response): Promise<any> => {
         .json({ error: 'user not found. Please register first' });
     }
 
+    // Check user in database
+    const existingUser = await db
+      .select()
+      .from(users)
+      .where(eq(users.userId, userId));
+
+    if (!existingUser.length) {
+      return res
+        .status(404)
+        .json({ error: 'User not found in database, please register' });
+    }
+
+    // Fetch users past messages for context
+    const chatHistory = await db
+      .select()
+      .from(chats)
+      .where(eq(chats.userId, userId))
+      .orderBy(chats.createdAt)
+      .limit(10);
+
+    // Format chat history for Open AI
+    const conversation: ChatCompletionMessageParam[] = chatHistory.flatMap(
+      (chat) => [
+        { role: 'user', content: chat.message },
+        { role: 'assistant', content: chat.reply },
+      ]
+    );
+
+    // Add latest user messages to the conversation
+    conversation.push({ role: 'user', content: message });
+
     // Send message to OpenAI GPT-4
     const response = await openai.chat.completions.create({
       model: 'gpt-4',
-      messages: [{ role: 'user', content: message }],
+      messages: conversation as ChatCompletionMessageParam[],
     });
 
     const aiMessage: string =
       response.choices[0].message?.content ?? 'No response from AI';
+
+    // Save chat to database
+    await db.insert(chats).values({ userId, message, reply: aiMessage });
 
     // Create or get channel
     const channel = chatClient.channel('messaging', `chat-${userId}`, {
@@ -96,6 +147,27 @@ app.post('/chat', async (req: Request, res: Response): Promise<any> => {
   } catch (error) {
     console.log('Error generating AI response', error);
     return res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+// Get chat history for a user
+app.post('/get-messages', async (req: Request, res: Response): Promise<any> => {
+  const { userId } = req.body;
+
+  if (!userId) {
+    return res.status(400).json({ error: 'User ID is required' });
+  }
+
+  try {
+    const chatHistory = await db
+      .select()
+      .from(chats)
+      .where(eq(chats.userId, userId));
+
+    res.status(200).json({ messages: chatHistory });
+  } catch (error) {
+    console.log('Error fetching chat history', error);
+    res.status(500).json({ error: 'Internal Server Error' });
   }
 });
 
