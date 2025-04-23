@@ -21,6 +21,7 @@ app.get('/', (req: Request, res: Response) => {
   res.send('Chat AI API is running!');
 }
 );
+
 // Initialize Stream Client
 const chatClient = StreamChat.getInstance(
   process.env.STREAM_API_KEY!,
