@@ -20,7 +20,9 @@ app.use(express.urlencoded({ extended: false }));
 app.get('/', (req: Request, res: Response) => {
   //  res.send('Chat AI API is running!');
   // res.send('CHAT AI API IS RUNNING!');
-  res.status(200).json({ message: 'Chat AI API is running!' });
+  res.status(200).json({ 
+    message: 'Hello, Chat AI API is running!' 
+  });
 }
 );
 
